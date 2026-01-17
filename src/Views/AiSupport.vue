@@ -1,267 +1,305 @@
-<template>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="logo">🌿</div>
-      <nav>
-        <div class="nav-item active">🏠</div>
-        <div class="nav-item">📊</div>
-        <div class="nav-item">⚙️</div>
-      </nav>
-      <div class="user-avatar">👤</div>
-    </aside>
+<script setup>
+import { ref, nextTick, computed } from 'vue'
+import { getAiMessage } from '../services/aiService'
+import { fallbackMessages } from '../services/fallbackMessages'
 
-    <main class="main-content">
-      <header class="dashboard-header">
-        <div class="greeting">
-          <h1>Good morning, Alex</h1>
-          <p>Saturday, January 10 — Let's focus on your peace today.</p>
-        </div>
-        <div class="status-pill">System Mindful</div>
-      </header>
+// --- State Management ---
+const mood = ref("")
+const loading = ref(false)
+const chatWindow = ref(null) 
+const isOnlineMode = ref(true)
+const lastError = ref(false)
 
-      <div class="bento-grid">
-        <section class="grid-card breathing-zone">
-          <div class="card-label">Focus Tool</div>
-          <div class="mouth-container">
-            <svg class="breathing-mouth" viewBox="0 0 200 100">
-              <path class="lip top-lip" d="M20,50 Q100,0 180,50 Q100,20 20,50 Z" fill="#6d597a" />
-              <path class="lip bottom-lip" d="M20,50 Q100,100 180,50 Q100,80 20,50 Z" fill="#b5838d" />
-              <ellipse class="mouth-opening" cx="100" cy="50" rx="60" ry="0" fill="#352f36" />
-            </svg>
-          </div>
-          <h3>Guided Respiration</h3>
-          <p>Follow the rhythm to center yourself.</p>
-        </section>
-
-        <section class="grid-card chat-zone">
-          <div class="card-label">AI Support</div>
-          <div class="chat-feed" ref="chatFeed">
-            <div v-for="(m, i) in messages" :key="i" :class="['msg', m.role]">
-              {{ m.text }}
-            </div>
-            <div v-if="isTyping" class="msg bot typing">...</div>
-          </div>
-          <form @submit.prevent="handleSend" class="chat-input-area">
-            <input v-model="userInput" placeholder="Talk to me..." />
-            <button :disabled="isTyping">↗</button>
-          </form>
-        </section>
-
-        <section class="grid-card tips-zone">
-          <div class="card-label">Daily Wisdom</div>
-          <div class="tip-item">
-            <span class="tip-bullet">☀️</span>
-            <div>
-              <h4>Morning Light</h4>
-              <p>10 mins of sun to reset.</p>
-            </div>
-          </div>
-          <div class="tip-item">
-            <span class="tip-bullet">💧</span>
-            <div>
-              <h4>Hydration</h4>
-              <p>Drink 250ml of water now.</p>
-            </div>
-          </div>
-        </section>
-
-        <section class="grid-card stats-zone">
-          <div class="card-label">Consistency</div>
-          <div class="streak-count">12</div>
-          <p>Day Streak</p>
-        </section>
-      </div>
-    </main>
-  </div>
-</template>
-
-<script>
-export default {
-  data() {
-    return {
-      userInput: '',
-      isTyping: false,
-      messages: [{ role: 'bot', text: "How can I support your peace today?" }]
-    }
-  },
-  methods: {
-    handleSend() {
-      if(!this.userInput) return;
-      this.messages.push({ role: 'user', text: this.userInput });
-      const input = this.userInput;
-      this.userInput = '';
-      this.isTyping = true;
-      
-      setTimeout(() => {
-        this.isTyping = false;
-        this.messages.push({ role: 'bot', text: "I'm here with you. Deep breaths." });
-        this.$nextTick(() => {
-          const feed = this.$refs.chatFeed;
-          feed.scrollTop = feed.scrollHeight;
-        });
-      }, 1500);
-    }
+const history = ref([
+  {
+    role: 'bot',
+    text: "Kumusta? Ako ang iyong Wellness Guide. Nandito ako para makinig. Ano ang nararamdaman mo ngayon?",
+    reactions: []
   }
+])
+
+const categories = [
+  { label: 'Stressed', emoji: '😫', prompt: 'Sobrang stressed ako at pagod na.' },
+  { label: 'Anxious', emoji: '😰', prompt: 'Kinakabahan ako at hindi ako mapakali.' },
+  { label: 'Malungkot', emoji: '😢', prompt: 'Medyo malungkot ako ngayon.' },
+  { label: 'Pagod', emoji: '😴', prompt: 'Wala akong energy at sobrang pagod.' }
+]
+
+// --- Logic ---
+const scrollToBottom = async () => {
+  await nextTick()
+  if (chatWindow.value) {
+    chatWindow.value.scrollTo({
+      top: chatWindow.value.scrollHeight,
+      behavior: 'smooth'
+    })
+  }
+}
+
+const addReaction = (index, emoji) => {
+  if (!history.value[index].reactions) history.value[index].reactions = []
+  if (!history.value[index].reactions.includes(emoji)) {
+    history.value[index].reactions.push(emoji)
+  }
+}
+
+const askAI = async (retryText = null) => {
+  const textToSend = retryText || mood.value.trim()
+  if (textToSend.length < 2) return
+
+  if (!retryText) {
+    history.value.push({ role: 'user', text: textToSend })
+    mood.value = ""
+  }
+  
+  loading.value = true
+  lastError.value = false
+  await scrollToBottom()
+
+  let response;
+  if (isOnlineMode.value) {
+    try {
+      const tagalogPrompt = `The user says: "${textToSend}". Respond in Tagalog. Be supportive and empathetic.`
+      response = await getAiMessage(tagalogPrompt)
+    } catch (e) {
+      lastError.value = true
+      response = "Pasensya na, nagkaroon ng error sa koneksyon. Gusto mo bang subukan ulit?"
+    }
+  } else {
+    response = fallbackMessages[Math.floor(Math.random() * fallbackMessages.length)]
+  }
+
+  history.value.push({ role: 'bot', text: response, reactions: [] })
+  loading.value = false
+  await scrollToBottom()
 }
 </script>
 
+<template>
+  <div class="ai-page">
+    <div class="chat-card shadow-premium">
+      <header class="chat-header-gradient">
+        <div class="header-content">
+          <div class="bot-info">
+            <div class="avatar-glow">🌸</div>
+            <div>
+              <h1>Wellness Guide</h1>
+              <div class="status-container">
+                <span class="status-dot" :class="{ 'offline': !isOnlineMode }"></span>
+                <p>{{ isOnlineMode ? 'Online Support' : 'Offline Mode' }}</p>
+              </div>
+            </div>
+          </div>
+          <div class="toggle-container">
+            <label class="switch">
+              <input type="checkbox" v-model="isOnlineMode">
+              <span class="slider round"></span>
+            </label>
+          </div>
+        </div>
+      </header>
+
+      <div class="chat-window" ref="chatWindow">
+        <div v-for="(msg, index) in history" :key="index" :class="['msg-container', msg.role]">
+          <div v-if="msg.role === 'bot'" class="bot-icon">🌿</div>
+          <div class="bubble-group">
+            <div class="bubble shadow-sm">
+              {{ msg.text }}
+            </div>
+            
+            <div v-if="msg.role === 'bot' && index > 0" class="actions">
+              <div class="emoji-picker-pill">
+                <span @click="addReaction(index, '❤️')">❤️</span>
+                <span @click="addReaction(index, '👍')">👍</span>
+                <span @click="addReaction(index, '🙏')">🙏</span>
+              </div>
+              <div class="applied-reactions">
+                <span v-for="r in msg.reactions" :key="r" class="badge-reaction">{{ r }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <div v-if="loading" class="msg-container bot">
+          <div class="bot-icon">🌿</div>
+          <div class="bubble typing-indicator">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+
+        <button v-if="lastError" @click="askAI(history[history.length-2].text)" class="retry-btn">
+          Subukan Ulit
+        </button>
+      </div>
+
+      <div class="mood-chips-container">
+        <button v-for="c in categories" :key="c.label" @click="mood = c.prompt" class="chip-premium">
+          <span class="chip-emoji">{{ c.emoji }}</span> {{ c.label }}
+        </button>
+      </div>
+
+      <form @submit.prevent="askAI()" class="chat-input-area">
+        <div class="input-glass-wrapper">
+          <input
+            v-model="mood"
+            placeholder="Ano ang nasa isip mo?..."
+            maxlength="100"
+            :disabled="loading"
+          />
+          <div class="char-counter" :class="{ 'danger': mood.length >= 90 }">
+            {{ mood.length }}
+          </div>
+        </div>
+        <button class="send-btn-premium" :disabled="loading || mood.length < 2">
+          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M2,21L23,12L2,3V10L17,12L2,14V21Z" /></svg>
+        </button>
+      </form>
+    </div>
+  </div>
+</template>
+
 <style scoped>
-/* Base Styles */
-.app-shell {
-  display: flex;
-  min-height: 100vh;
-  background: #f8f9fa;
-  color: #2d3436;
-  font-family: 'Inter', sans-serif;
+/* Main Background Gradient - Warm Peach to Rose */
+.ai-page { 
+  display: flex; justify-content: center; align-items: center; 
+  min-height: 100vh; background: linear-gradient(135deg, #fce7f3 0%, #fae8ff 100%); 
+  padding: 20px; 
 }
 
-/* Sidebar */
-.sidebar {
-  width: 80px;
-  background: #ffffff;
-  border-right: 1px solid #eee;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 30px 0;
-  gap: 40px;
-}
-.nav-item { font-size: 1.5rem; cursor: pointer; opacity: 0.5; transition: 0.3s; }
-.nav-item.active { opacity: 1; color: #6d597a; }
-
-/* Main Content Area */
-.main-content {
-  flex: 1;
-  padding: 40px 60px;
-  max-width: 1200px;
-  margin: 0 auto;
+.chat-card { 
+  width: 100%; max-width: 480px; height: 750px; 
+  background: #ffffff; border-radius: 32px; 
+  display: flex; flex-direction: column; 
+  overflow: hidden; border: 1px solid rgba(255,255,255,0.8);
 }
 
-.dashboard-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 40px;
-}
-.greeting h1 { font-size: 2rem; margin: 0; color: #2d3436; }
-.greeting p { color: #636e72; margin: 5px 0 0; }
-.status-pill {
-  background: #e3f2fd;
-  color: #1976d2;
-  padding: 6px 16px;
-  border-radius: 100px;
-  font-size: 0.8rem;
-  font-weight: 600;
+/* Deeper shadow with a tint of plum */
+.shadow-premium { box-shadow: 0 25px 50px -12px rgba(88, 28, 135, 0.15); }
+
+/* Header Design - Deep Plum to Rose Gradient */
+.chat-header-gradient { 
+  background: linear-gradient(to right, #581c87, #86198f); 
+  color: white; padding: 25px 20px; 
 }
 
-/* Bento Grid */
-.bento-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(2, 300px);
-  gap: 24px;
+.avatar-glow {
+  width: 45px; height: 45px; background: rgba(255,255,255,0.2);
+  border-radius: 14px; display: flex; align-items: center;
+  justify-content: center; font-size: 1.5rem; border: 1px solid rgba(255,255,255,0.3);
 }
 
-.grid-card {
-  background: #ffffff;
-  border-radius: 32px;
-  padding: 30px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.03);
-  position: relative;
-  overflow: hidden;
-  border: 1px solid rgba(0,0,0,0.02);
+.status-container { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+/* Golden status dot for a premium feel */
+.status-dot { width: 8px; height: 8px; background: #fbbf24; border-radius: 50%; box-shadow: 0 0 10px #fbbf24; }
+.status-dot.offline { background: #cbd5e1; box-shadow: none; }
+.status-container p { font-size: 0.8rem; opacity: 0.9; }
+
+/* Chat Window - Very soft cream background */
+.chat-window { flex: 1; padding: 25px; overflow-y: auto; background: #fffafb; display: flex; flex-direction: column; gap: 20px; }
+
+.bubble { 
+  padding: 14px 18px; border-radius: 20px; font-size: 0.95rem; 
+  line-height: 1.5; max-width: 100%; 
 }
 
-.card-label {
-  font-size: 0.7rem;
-  font-weight: 800;
-  text-transform: uppercase;
-  color: #b2bec3;
-  margin-bottom: 20px;
+/* User Bubble - Sunset Rose */
+.user .bubble { 
+  background: #be185d; color: white; 
+  border-bottom-right-radius: 4px;
 }
 
-/* Component Specific Styles */
-.breathing-zone {
-  grid-row: span 2;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  background: linear-gradient(180deg, #ffffff 0%, #fef9f9 100%);
+/* Bot Bubble - Clean White with soft rose border */
+.bot .bubble { 
+  background: white; color: #4c0519; 
+  border-bottom-left-radius: 4px; border: 1px solid #fce7f3;
 }
 
-.mouth-container { height: 120px; margin-bottom: 30px; }
-.breathing-mouth { width: 180px; }
-.mouth-opening { animation: open 4s infinite ease-in-out; }
-.top-lip { animation: top 4s infinite ease-in-out; }
-.bottom-lip { animation: bottom 4s infinite ease-in-out; }
+.bot-icon { font-size: 1.2rem; }
 
-@keyframes open { 0%, 100% { ry: 0; } 50% { ry: 20; } }
-@keyframes top { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-@keyframes bottom { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(10px); } }
-
-.chat-zone {
-  grid-column: span 2;
-  display: flex;
-  flex-direction: column;
+/* Reactions */
+.emoji-picker-pill {
+  display: flex; gap: 10px; padding: 4px 12px;
+  background: white; border-radius: 20px; border: 1px solid #fce7f3;
+  width: fit-content; margin-top: 8px; cursor: pointer;
 }
 
-.chat-feed {
-  flex: 1;
-  overflow-y: auto;
-  margin-bottom: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.badge-reaction {
+  font-size: 0.8rem; background: #fdf2f8; color: #be185d; padding: 2px 8px;
+  border-radius: 10px; border: 1px solid #fce7f3;
 }
 
-.msg {
-  padding: 10px 16px;
-  border-radius: 16px;
-  font-size: 0.9rem;
-  max-width: 70%;
-}
-.msg.bot { background: #f1f2f6; align-self: flex-start; }
-.msg.user { background: #6d597a; color: white; align-self: flex-end; }
-
-.chat-input-area {
-  display: flex;
-  gap: 10px;
-}
-.chat-input-area input {
-  flex: 1;
-  padding: 12px 20px;
-  border-radius: 100px;
-  border: 1px solid #eee;
-  outline: none;
-}
-.chat-input-area button {
-  width: 45px;
-  background: #6d597a;
-  color: white;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
+/* Mood Chips - Soft Pink/Plum style */
+.mood-chips-container { 
+  display: flex; gap: 10px; padding: 15px 20px; 
+  overflow-x: auto; background: white; border-top: 1px solid #fff1f2; 
 }
 
-.tip-item {
-  display: flex;
-  gap: 15px;
-  margin-bottom: 20px;
+.chip-premium {
+  flex-shrink: 0; padding: 8px 16px; border-radius: 14px;
+  background: #fdf2f8; border: 1px solid #fbcfe8;
+  color: #9d174d; font-weight: 600; font-size: 0.85rem;
+  transition: all 0.2s ease;
 }
-.tip-bullet { font-size: 1.5rem; }
-.tip-item h4 { margin: 0; font-size: 1rem; }
-.tip-item p { margin: 0; font-size: 0.8rem; color: #636e72; }
 
-.stats-zone {
-  background: #6d597a;
-  color: white;
-  text-align: center;
-}
-.streak-count { font-size: 4rem; font-weight: 800; margin-top: 10px; }
+.chip-premium:hover { transform: translateY(-2px); background: #fce7f3; border-color: #f9a8d4; }
 
-@media (max-width: 900px) {
-  .bento-grid { grid-template-columns: 1fr; grid-template-rows: auto; }
-  .sidebar { display: none; }
+/* Input Styling */
+.chat-input-area { padding: 20px; background: white; display: flex; gap: 12px; align-items: center; }
+.input-glass-wrapper { 
+  flex: 1; position: relative; 
+  background: #fff1f2; border-radius: 18px; 
+  padding: 2px; border: 1px solid #fce7f3;
 }
+
+input { 
+  width: 100%; padding: 12px 15px; background: transparent; 
+  border: none; outline: none; color: #4c0519;
+}
+input::placeholder { color: #d1d5db; }
+
+.char-counter { position: absolute; right: 15px; bottom: 12px; font-size: 0.75rem; color: #fda4af; }
+.char-counter.danger { color: #e11d48; }
+
+/* Send Button - Matched to User Bubble */
+.send-btn-premium {
+  background: #be185d; color: white; border: none;
+  width: 48px; height: 48px; border-radius: 16px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px rgba(190, 24, 93, 0.2);
+}
+
+.send-btn-premium:hover:not(:disabled) { transform: scale(1.05); background: #9d174d; }
+.send-btn-premium:disabled { background: #fbcfe8; cursor: not-allowed; }
+
+/* Typing Animation - Rose color */
+.typing-indicator span {
+  height: 6px; width: 6px; background: #f472b6;
+  display: inline-block; border-radius: 50%;
+  margin: 0 2px; animation: bounce 1.3s infinite;
+}
+.typing-indicator span:nth-child(2) { animation-delay: 0.15s; }
+.typing-indicator span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }
+
+/* Custom Switch - Rose Gold / Pink */
+.switch { position: relative; display: inline-block; width: 40px; height: 22px; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #e2e8f0; transition: .4s; border-radius: 34px;
+}
+.slider:before {
+  position: absolute; content: ""; height: 16px; width: 16px;
+  left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%;
+}
+input:checked + .slider { background-color: #be185d; }
+input:checked + .slider:before { transform: translateX(18px); }
+
+.retry-btn {
+  align-self: center; background: white; border: 1px solid #be185d; color: #be185d;
+  padding: 8px 16px; border-radius: 12px; margin-top: 10px; cursor: pointer; transition: 0.2s;
+}
+.retry-btn:hover { background: #be185d; color: white; }
 </style>
